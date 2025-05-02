@@ -171,7 +171,7 @@ async def dl_res():
     curr_res_list = check_res_list()
     old_res_list = old_ver_info["abInfos"]
 
-    # 剧情背景和 CG, 干员立绘, 干员时装, 立绘差分
+    # 剧情背景和 CG, 干员立绘, 干员时装, 立绘差分, 活动 UI 资源
     res_type_list = [
         "avg/imgs",
         "avg/bg",
@@ -194,17 +194,17 @@ async def dl_res():
         diff_data = diff(old_res[res_type], curr_res[res_type])
 
         download_new_list = [i.split("/")[-1][:-3] for i in diff_data["new"]]
-        # download_update_list = [i.split("/")[-1][:-3] for i in diff_data["update"]]
+        download_update_list = [i.split("/")[-1][:-3] for i in diff_data["update"]]
 
         for resName in download_new_list:
             dl_list.append(
                 download_ark_res(res_version, res_type, resName, "new/" + res_type)
             )
 
-        # for resName in download_update_list:
-        #     dl_list.append(
-        #         download_ark_res(res_version, res_type, resName, "update/" + res_type)
-        #     )
+        for resName in download_update_list:
+            dl_list.append(
+                download_ark_res(res_version, res_type, resName, "update/" + res_type)
+            )
 
     await asyncio.gather(*dl_list)
     with open(DATAPATH / "resVersion.yaml", "w") as file:
