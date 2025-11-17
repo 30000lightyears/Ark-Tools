@@ -4,6 +4,7 @@ Ark-Tools GUI应用
 """
 
 import asyncio
+import datetime
 import threading
 import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog, messagebox
@@ -88,16 +89,78 @@ class ArkToolsGUI:
 
         ttk.Button(button_frame, text="停止下载", command=self.stop_download, state=tk.DISABLED).grid(row=0, column=1, padx=5)
 
+        ttk.Button(button_frame, text="刷新文件列表", command=self.refresh_download_list).grid(row=0, column=2, padx=5)
+
         # 进度条
         self.download_progress = ttk.Progressbar(tab, mode='indeterminate')
         self.download_progress.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
 
-        # 日志输出
-        log_frame = ttk.LabelFrame(tab, text="下载日志", padding="10")
-        log_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # 创建PanedWindow来分割文件列表和日志
+        paned = ttk.PanedWindow(tab, orient=tk.VERTICAL)
+        paned.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-        self.download_log = scrolledtext.ScrolledText(log_frame, height=15, state=tk.DISABLED)
+        # 文件列表框架
+        file_list_frame = ttk.LabelFrame(paned, text="已下载文件", padding="10")
+
+        # 创建Treeview来显示文件列表
+        tree_container = ttk.Frame(file_list_frame)
+        tree_container.pack(fill=tk.BOTH, expand=True)
+
+        # 添加滚动条
+        tree_scroll_y = ttk.Scrollbar(tree_container, orient=tk.VERTICAL)
+        tree_scroll_x = ttk.Scrollbar(tree_container, orient=tk.HORIZONTAL)
+
+        # 创建Treeview
+        self.download_tree = ttk.Treeview(
+            tree_container,
+            columns=("name", "directory", "type", "size", "mtime"),
+            show="headings",
+            yscrollcommand=tree_scroll_y.set,
+            xscrollcommand=tree_scroll_x.set
+        )
+
+        # 配置滚动条
+        tree_scroll_y.config(command=self.download_tree.yview)
+        tree_scroll_x.config(command=self.download_tree.xview)
+
+        # 定义列
+        self.download_tree.heading("name", text="文件名", command=lambda: self.sort_tree_column("name", False))
+        self.download_tree.heading("directory", text="目录", command=lambda: self.sort_tree_column("directory", False))
+        self.download_tree.heading("type", text="类型", command=lambda: self.sort_tree_column("type", False))
+        self.download_tree.heading("size", text="大小", command=lambda: self.sort_tree_column("size", False))
+        self.download_tree.heading("mtime", text="修改时间", command=lambda: self.sort_tree_column("mtime", False))
+
+        # 设置列宽
+        self.download_tree.column("name", width=200)
+        self.download_tree.column("directory", width=250)
+        self.download_tree.column("type", width=80)
+        self.download_tree.column("size", width=100)
+        self.download_tree.column("mtime", width=150)
+
+        # 布局Treeview和滚动条
+        self.download_tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        tree_scroll_y.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        tree_scroll_x.grid(row=1, column=0, sticky=(tk.W, tk.E))
+
+        tree_container.columnconfigure(0, weight=1)
+        tree_container.rowconfigure(0, weight=1)
+
+        # 统计信息
+        stats_frame = ttk.Frame(file_list_frame)
+        stats_frame.pack(fill=tk.X, pady=(5, 0))
+
+        self.download_stats_var = tk.StringVar(value="总计: 0 个文件")
+        ttk.Label(stats_frame, textvariable=self.download_stats_var).pack(side=tk.LEFT)
+
+        # 日志输出框架
+        log_frame = ttk.LabelFrame(paned, text="下载日志", padding="10")
+
+        self.download_log = scrolledtext.ScrolledText(log_frame, height=10, state=tk.DISABLED)
         self.download_log.pack(fill=tk.BOTH, expand=True)
+
+        # 添加到PanedWindow
+        paned.add(file_list_frame, weight=3)
+        paned.add(log_frame, weight=1)
 
         # 配置行列权重
         tab.columnconfigure(0, weight=1)
@@ -498,7 +561,11 @@ class ArkToolsGUI:
                 loop.run_until_complete(download_res.dl_res())
 
                 self.log_message(self.download_log, "资源下载完成！")
+                self.log_message(self.download_log, "正在刷新文件列表...")
                 self.status_bar.config(text="下载完成")
+
+                # 自动刷新文件列表
+                self.refresh_download_list()
 
             except Exception as e:
                 self.log_message(self.download_log, f"下载时出错: {e}")
@@ -660,6 +727,115 @@ class ArkToolsGUI:
         log_widget.insert(tk.END, f"{message}\n")
         log_widget.see(tk.END)
         log_widget.config(state=tk.DISABLED)
+
+    def format_size(self, size_bytes: int) -> str:
+        """格式化文件大小"""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.2f} {unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.2f} TB"
+
+    def format_time(self, timestamp: float) -> str:
+        """格式化时间戳"""
+        dt = datetime.datetime.fromtimestamp(timestamp)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    def sort_tree_column(self, col: str, reverse: bool):
+        """对Treeview列进行排序"""
+        items = [(self.download_tree.set(k, col), k) for k in self.download_tree.get_children('')]
+
+        # 根据列类型进行不同的排序
+        if col == "size":
+            # 对大小列进行数值排序
+            items.sort(key=lambda t: float(t[0].split()[0]) if t[0] else 0, reverse=reverse)
+        elif col == "mtime":
+            # 对时间列进行排序
+            items.sort(key=lambda t: t[0], reverse=reverse)
+        else:
+            # 对其他列进行字符串排序
+            items.sort(reverse=reverse)
+
+        # 重新排列项目
+        for index, (val, k) in enumerate(items):
+            self.download_tree.move(k, '', index)
+
+        # 更新表头，下次点击反向排序
+        self.download_tree.heading(col, command=lambda: self.sort_tree_column(col, not reverse))
+
+    def refresh_download_list(self):
+        """刷新下载文件列表"""
+        self.log_message(self.download_log, "正在刷新文件列表...")
+        self.status_bar.config(text="正在刷新文件列表...")
+
+        def refresh_thread():
+            try:
+                # 清空当前列表
+                for item in self.download_tree.get_children():
+                    self.download_tree.delete(item)
+
+                # 扫描下载目录
+                download_path = config.DOWNLOADPATH
+                if not download_path.exists():
+                    self.log_message(self.download_log, f"下载目录不存在: {download_path}")
+                    self.status_bar.config(text="下载目录不存在")
+                    return
+
+                file_count = 0
+                total_size = 0
+
+                # 递归扫描所有文件
+                for file_path in download_path.rglob("*.zip"):
+                    # 获取文件信息
+                    stat = file_path.stat()
+                    file_size = stat.st_size
+                    file_mtime = stat.st_mtime
+
+                    # 确定文件类型（新文件/更新）
+                    relative_path = file_path.relative_to(download_path)
+                    parts = relative_path.parts
+
+                    file_type = "未知"
+                    directory = str(relative_path.parent)
+
+                    if len(parts) > 1:
+                        if parts[1] == "new":
+                            file_type = "新文件"
+                        elif parts[1] == "update":
+                            file_type = "更新"
+                        elif parts[1] == "anon":
+                            file_type = "匿名"
+                        elif parts[1] == "excel":
+                            file_type = "数据表"
+
+                    # 添加到Treeview
+                    self.download_tree.insert(
+                        "",
+                        tk.END,
+                        values=(
+                            file_path.name,
+                            directory,
+                            file_type,
+                            self.format_size(file_size),
+                            self.format_time(file_mtime)
+                        )
+                    )
+
+                    file_count += 1
+                    total_size += file_size
+
+                # 更新统计信息
+                stats_text = f"总计: {file_count} 个文件，总大小: {self.format_size(total_size)}"
+                self.download_stats_var.set(stats_text)
+
+                self.log_message(self.download_log, f"文件列表刷新完成，共找到 {file_count} 个文件")
+                self.status_bar.config(text="文件列表刷新完成")
+
+            except Exception as e:
+                self.log_message(self.download_log, f"刷新文件列表时出错: {e}")
+                self.status_bar.config(text="刷新失败")
+
+        threading.Thread(target=refresh_thread, daemon=True).start()
 
 
 def main():
