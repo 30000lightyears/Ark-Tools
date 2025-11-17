@@ -6,7 +6,7 @@ from typing import Any
 
 import UnityPy
 from natsort import natsorted
-from UnityPy.classes import MonoBehaviour, Sprite, Texture2D
+from UnityPy.classes import AudioClip, MonoBehaviour, Sprite, Texture2D
 
 
 class ArkMediaUnPacker:
@@ -23,6 +23,7 @@ class ArkMediaUnPacker:
             "type_cnt": 0,
             "pics": {"full": [], "face": [], "full_alpha": [], "face_alpha": []},
             "pos_info": [],
+            "audios": [],
         }
 
     def save_Texture2D(self, data: Texture2D):
@@ -91,6 +92,40 @@ class ArkMediaUnPacker:
             with contextlib.suppress(Exception):
                 data.image.save(out_file)
 
+    def save_AudioClip(self, data: AudioClip):
+        """保存音频文件（BGM、语音、音效等）
+
+        Args:
+            data (_type_): AudioClip
+        """
+
+        if not self.output_path.exists():
+            self.output_path.mkdir()
+
+        audio_path = self.output_path / "audio"
+
+        if not audio_path.exists():
+            audio_path.mkdir()
+
+        # AudioClip的samples属性包含音频数据
+        # UnityPy会根据音频格式自动选择合适的扩展名
+        try:
+            for name, audio_data in data.samples.items():
+                # 根据音频格式确定扩展名
+                extension = name.split(".")[-1] if "." in name else "wav"
+                out_file = audio_path / f"{data.m_Name}.{extension}"
+
+                # 保存音频数据
+                with open(out_file, "wb") as f:
+                    f.write(audio_data)
+
+                self.result["audios"].append(out_file.name)
+                self.result["type_cnt"] += 1
+
+        except Exception as e:
+            # 如果解包失败，尝试使用默认的wav格式
+            print(f"Error saving AudioClip {data.m_Name}: {e}")
+
     def get_pos_info(self, mono: MonoBehaviour):
         """获取差分图像的变形参数
 
@@ -113,6 +148,7 @@ class ArkMediaUnPacker:
         "Texture2D": save_Texture2D,
         "MonoBehaviour": get_pos_info,
         "Sprite": save_Sprite,
+        "AudioClip": save_AudioClip,
     }
 
     def export_avg_chararts(self) -> dict[str, Any]:
