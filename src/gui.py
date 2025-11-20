@@ -14,6 +14,7 @@ import sys
 
 # 导入各个功能模块
 from src import download_res, unpacker, avg_export, avg_gen_face, audio, config
+from src.util import extract_package
 
 
 class ArkToolsGUI:
@@ -171,13 +172,14 @@ class ArkToolsGUI:
         tab = ttk.Frame(self.notebook, padding="10")
         self.notebook.add(tab, text="📦 资源解包")
 
-        # 文件选择框架
-        file_frame = ttk.LabelFrame(tab, text="选择文件", padding="10")
-        file_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        # 输入目录选择框架
+        input_frame = ttk.LabelFrame(tab, text="输入目录（包含ZIP文件）", padding="10")
+        input_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
 
-        self.unpack_file_var = tk.StringVar()
-        ttk.Entry(file_frame, textvariable=self.unpack_file_var, width=60).grid(row=0, column=0, padx=(0, 10))
-        ttk.Button(file_frame, text="浏览...", command=self.browse_unpack_file).grid(row=0, column=1)
+        self.unpack_input_var = tk.StringVar()
+        ttk.Entry(input_frame, textvariable=self.unpack_input_var, width=60).grid(row=0, column=0, padx=(0, 10))
+        ttk.Button(input_frame, text="浏览...", command=self.browse_unpack_input).grid(row=0, column=1)
+        ttk.Button(input_frame, text="使用当前版本", command=self.use_current_version_path).grid(row=0, column=2, padx=(5, 0))
 
         # 输出目录框架
         output_frame = ttk.LabelFrame(tab, text="输出目录", padding="10")
@@ -432,13 +434,23 @@ class ArkToolsGUI:
         tab.columnconfigure(0, weight=1)
 
     # 辅助方法 - 文件/目录浏览
-    def browse_unpack_file(self):
-        filename = filedialog.askopenfilename(
-            title="选择要解包的文件",
-            filetypes=[("所有文件", "*.*"), ("ZIP文件", "*.zip")]
-        )
-        if filename:
-            self.unpack_file_var.set(filename)
+    def browse_unpack_input(self):
+        dirname = filedialog.askdirectory(title="选择包含ZIP文件的目录")
+        if dirname:
+            self.unpack_input_var.set(dirname)
+
+    def use_current_version_path(self):
+        """使用当前版本的下载目录"""
+        try:
+            res_version = download_res.get_res_version()
+            default_path = config.DOWNLOADPATH / res_version / "new" / "avg" / "characters"
+            if default_path.exists():
+                self.unpack_input_var.set(str(default_path))
+                self.log_message(self.unpack_log, f"已设置为当前版本目录: {default_path}")
+            else:
+                self.log_message(self.unpack_log, f"目录不存在: {default_path}")
+        except Exception as e:
+            self.log_message(self.unpack_log, f"获取版本信息失败: {e}")
 
     def browse_unpack_output(self):
         dirname = filedialog.askdirectory(title="选择输出目录")
@@ -579,12 +591,23 @@ class ArkToolsGUI:
     # 功能方法 - 资源解包
     def start_unpack(self):
         """开始解包资源"""
-        file_path = self.unpack_file_var.get()
-        if not file_path:
-            messagebox.showwarning("警告", "请选择要解包的文件")
+        input_dir = self.unpack_input_var.get()
+        if not input_dir:
+            messagebox.showwarning("警告", "请选择包含ZIP文件的目录")
             return
 
-        self.log_message(self.unpack_log, f"开始解包: {file_path}")
+        input_path = Path(input_dir)
+        if not input_path.exists():
+            messagebox.showwarning("警告", f"目录不存在: {input_dir}")
+            return
+
+        # 扫描ZIP文件
+        zip_files = list(input_path.glob("*.zip"))
+        if not zip_files:
+            messagebox.showwarning("警告", f"目录中没有找到ZIP文件: {input_dir}")
+            return
+
+        self.log_message(self.unpack_log, f"找到 {len(zip_files)} 个ZIP文件，开始解包...")
         self.unpack_progress.start()
         self.status_bar.config(text="正在解包...")
 
@@ -593,12 +616,34 @@ class ArkToolsGUI:
                 output_dir = Path(self.unpack_output_var.get())
                 output_dir.mkdir(parents=True, exist_ok=True)
 
-                # 调用解包函数
-                unpacker_obj = unpacker.ArkMediaUnPacker(file_path, str(output_dir))
-                # 这里需要根据实际的unpacker实现来调用
+                success_count = 0
+                error_list = []
 
-                self.log_message(self.unpack_log, "解包完成！")
-                self.status_bar.config(text="解包完成")
+                for zip_file in zip_files:
+                    try:
+                        self.log_message(self.unpack_log, f"处理: {zip_file.name}")
+
+                        # 1. 解压ZIP获取asset bundle字节数据
+                        ab_bytes = extract_package(zip_file)
+
+                        # 2. 使用UnityPy解包
+                        unpacker_obj = unpacker.ArkMediaUnPacker(ab_bytes, str(output_dir))
+                        unpack_info = unpacker_obj.export_avg_chararts()
+
+                        # 3. 生成立绘差分
+                        result_files = avg_export.gen_avg_chararts(unpack_info)
+
+                        self.log_message(self.unpack_log, f"  生成 {len(result_files)} 张图片")
+                        success_count += 1
+
+                    except Exception as e:
+                        error_list.append(zip_file.name)
+                        self.log_message(self.unpack_log, f"  错误: {e}")
+
+                self.log_message(self.unpack_log, f"\n解包完成！成功: {success_count}, 失败: {len(error_list)}")
+                if error_list:
+                    self.log_message(self.unpack_log, f"失败文件: {', '.join(error_list)}")
+                self.status_bar.config(text=f"解包完成 - 成功: {success_count}, 失败: {len(error_list)}")
 
             except Exception as e:
                 self.log_message(self.unpack_log, f"解包时出错: {e}")
