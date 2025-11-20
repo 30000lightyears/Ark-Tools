@@ -508,12 +508,8 @@ class ArkToolsGUI:
 
         def check_thread():
             try:
-                # 这里需要异步运行
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
-                # 获取最新版本
-                latest = loop.run_until_complete(download_res.get_res_version())
+                # 获取最新版本（这是普通函数，不是异步函数）
+                latest = download_res.get_res_version()
                 self.latest_version_var.set(latest)
 
                 # 获取本地版本
@@ -523,7 +519,7 @@ class ArkToolsGUI:
                     yaml = ruamel.yaml.YAML()
                     with open(res_version_file, encoding="utf8") as f:
                         data = yaml.load(f)
-                        local = data.get("resVersion", "未知")
+                        local = data.get("currentVersion", "未知")
                         self.local_version_var.set(local)
                 else:
                     self.local_version_var.set("无")
