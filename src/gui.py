@@ -277,31 +277,33 @@ class ArkToolsGUI:
         input_frame = ttk.LabelFrame(tab, text="输入目录（立绘差分）", padding="10")
         input_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
 
-        self.face_input_var = tk.StringVar(value="output/chararts")
+        self.face_input_var = tk.StringVar(value="out")
         ttk.Entry(input_frame, textvariable=self.face_input_var, width=60).grid(row=0, column=0, padx=(0, 10))
         ttk.Button(input_frame, text="浏览...", command=self.browse_face_input).grid(row=0, column=1)
 
-        # 输出目录框架
-        output_frame = ttk.LabelFrame(tab, text="输出目录", padding="10")
-        output_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        # 背景图片框架
+        bg_frame = ttk.LabelFrame(tab, text="背景图片", padding="10")
+        bg_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
 
-        self.face_output_var = tk.StringVar(value="output/face_cards")
-        ttk.Entry(output_frame, textvariable=self.face_output_var, width=60).grid(row=0, column=0, padx=(0, 10))
-        ttk.Button(output_frame, text="浏览...", command=self.browse_face_output).grid(row=0, column=1)
+        self.face_bg_var = tk.StringVar()
+        ttk.Entry(bg_frame, textvariable=self.face_bg_var, width=60).grid(row=0, column=0, padx=(0, 10))
+        ttk.Button(bg_frame, text="浏览...", command=self.browse_face_bg).grid(row=0, column=1)
 
-        # 生成选项
-        options_frame = ttk.LabelFrame(tab, text="生成选项", padding="10")
-        options_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        # 裁剪参数框架
+        crop_frame = ttk.LabelFrame(tab, text="裁剪参数（头部位置）", padding="10")
+        crop_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
 
-        self.face_upscale_var = tk.BooleanVar(value=True)
-        self.face_blur_bg_var = tk.BooleanVar(value=True)
+        ttk.Label(crop_frame, text="左上角X:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        self.crop_x_var = tk.IntVar(value=460)
+        ttk.Entry(crop_frame, textvariable=self.crop_x_var, width=10).grid(row=0, column=1, sticky=tk.W, padx=(5, 20), pady=2)
 
-        ttk.Checkbutton(options_frame, text="启用超分处理（RealCUGAN）", variable=self.face_upscale_var).grid(row=0, column=0, sticky=tk.W)
-        ttk.Checkbutton(options_frame, text="启用背景模糊", variable=self.face_blur_bg_var).grid(row=1, column=0, sticky=tk.W)
+        ttk.Label(crop_frame, text="左上角Y:").grid(row=0, column=2, sticky=tk.W, pady=2)
+        self.crop_y_var = tk.IntVar(value=60)
+        ttk.Entry(crop_frame, textvariable=self.crop_y_var, width=10).grid(row=0, column=3, sticky=tk.W, padx=(5, 20), pady=2)
 
-        ttk.Label(options_frame, text="网格列数:").grid(row=2, column=0, sticky=tk.W, pady=(10, 0))
-        self.face_cols_var = tk.IntVar(value=4)
-        ttk.Spinbox(options_frame, from_=3, to=6, textvariable=self.face_cols_var, width=10).grid(row=2, column=1, sticky=tk.W, pady=(10, 0))
+        ttk.Label(crop_frame, text="裁剪宽度:").grid(row=0, column=4, sticky=tk.W, pady=2)
+        self.crop_width_var = tk.IntVar(value=160)
+        ttk.Entry(crop_frame, textvariable=self.crop_width_var, width=10).grid(row=0, column=5, sticky=tk.W, padx=(5, 0), pady=2)
 
         # 操作按钮
         ttk.Button(tab, text="生成表情卡片", command=self.start_face_gen).grid(row=3, column=0, pady=(0, 10))
@@ -472,10 +474,13 @@ class ArkToolsGUI:
         if dirname:
             self.face_input_var.set(dirname)
 
-    def browse_face_output(self):
-        dirname = filedialog.askdirectory(title="选择输出目录")
-        if dirname:
-            self.face_output_var.set(dirname)
+    def browse_face_bg(self):
+        filename = filedialog.askopenfilename(
+            title="选择背景图片",
+            filetypes=[("图片文件", "*.png *.jpg *.jpeg"), ("所有文件", "*.*")]
+        )
+        if filename:
+            self.face_bg_var.set(filename)
 
     def browse_audio_file(self):
         filename = filedialog.askopenfilename(
@@ -655,26 +660,46 @@ class ArkToolsGUI:
 
     # 功能方法 - 立绘导出
     def start_avg_export(self):
-        """开始导出立绘"""
+        """开始导出立绘 - 扫描并复制已生成的立绘到指定目录"""
         input_dir = self.avg_input_var.get()
         if not input_dir or not Path(input_dir).exists():
             messagebox.showwarning("警告", "请选择有效的输入目录")
             return
 
-        self.log_message(self.avg_log, "开始导出立绘...")
+        input_path = Path(input_dir)
+
+        # 扫描所有PNG文件
+        png_files = list(input_path.rglob("*.png"))
+        if not png_files:
+            messagebox.showwarning("警告", f"目录中没有找到PNG文件: {input_dir}")
+            return
+
+        self.log_message(self.avg_log, f"找到 {len(png_files)} 个PNG文件，开始导出...")
         self.avg_progress.start()
         self.status_bar.config(text="正在导出立绘...")
 
         def export_thread():
             try:
+                import shutil
                 output_dir = Path(self.avg_output_var.get())
                 output_dir.mkdir(parents=True, exist_ok=True)
 
-                # 调用导出函数
-                # avg_export.gen_avg_chararts()
+                success_count = 0
+                for png_file in png_files:
+                    try:
+                        # 保持相对目录结构
+                        relative_path = png_file.relative_to(input_path)
+                        dest_path = output_dir / relative_path
+                        dest_path.parent.mkdir(parents=True, exist_ok=True)
 
-                self.log_message(self.avg_log, "立绘导出完成！")
-                self.status_bar.config(text="导出完成")
+                        shutil.copy2(png_file, dest_path)
+                        success_count += 1
+
+                    except Exception as e:
+                        self.log_message(self.avg_log, f"复制失败 {png_file.name}: {e}")
+
+                self.log_message(self.avg_log, f"\n导出完成！成功复制 {success_count} 个文件到 {output_dir}")
+                self.status_bar.config(text=f"导出完成 - {success_count} 个文件")
 
             except Exception as e:
                 self.log_message(self.avg_log, f"导出时出错: {e}")
@@ -692,20 +717,52 @@ class ArkToolsGUI:
             messagebox.showwarning("警告", "请选择有效的输入目录")
             return
 
-        self.log_message(self.face_log, "开始生成表情卡片...")
+        bg_path = self.face_bg_var.get()
+        if not bg_path or not Path(bg_path).exists():
+            messagebox.showwarning("警告", "请选择有效的背景图片")
+            return
+
+        input_path = Path(input_dir)
+
+        # 扫描立绘差分目录
+        char_dirs = [d for d in input_path.iterdir() if d.is_dir() and (d / "1$1.png").exists()]
+        if not char_dirs:
+            messagebox.showwarning("警告", f"目录中没有找到立绘差分: {input_dir}")
+            return
+
+        self.log_message(self.face_log, f"找到 {len(char_dirs)} 个角色目录，开始生成表情卡片...")
         self.face_progress.start()
         self.status_bar.config(text="正在生成表情卡片...")
 
         def gen_thread():
             try:
-                output_dir = Path(self.face_output_var.get())
-                output_dir.mkdir(parents=True, exist_ok=True)
+                # 获取裁剪参数
+                crop_x = self.crop_x_var.get()
+                crop_y = self.crop_y_var.get()
+                crop_width = self.crop_width_var.get()
+                crop_data = [(crop_x, crop_y, crop_width)]
 
-                # 调用表情生成函数
-                # avg_gen_face.gen_face()
+                success_count = 0
+                error_list = []
 
-                self.log_message(self.face_log, "表情卡片生成完成！")
-                self.status_bar.config(text="生成完成")
+                for char_dir in char_dirs:
+                    try:
+                        self.log_message(self.face_log, f"处理: {char_dir.name}")
+
+                        # 调用表情生成函数
+                        avg_gen_face.gen_face(char_dir, crop_data, Path(bg_path))
+
+                        self.log_message(self.face_log, f"  完成")
+                        success_count += 1
+
+                    except Exception as e:
+                        error_list.append(char_dir.name)
+                        self.log_message(self.face_log, f"  错误: {e}")
+
+                self.log_message(self.face_log, f"\n生成完成！成功: {success_count}, 失败: {len(error_list)}")
+                if error_list:
+                    self.log_message(self.face_log, f"失败目录: {', '.join(error_list)}")
+                self.status_bar.config(text=f"生成完成 - 成功: {success_count}, 失败: {len(error_list)}")
 
             except Exception as e:
                 self.log_message(self.face_log, f"生成时出错: {e}")
